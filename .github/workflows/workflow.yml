@@ -1,4 +1,6 @@
 # Documentation: https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsuses
+name: github_worflow
+run-name: GitHub Workflow
 
 env:
   # Service name (must be lowercase and not contain any spaces)
@@ -20,17 +22,13 @@ env:
   # The Kubernetes namespace that the service (prod) should be deployed to
   PROD_NAMESPACE: namespace-prod
 
-name: ${{ env.SERVICE_NAME }}_workflow
-run-name: ${{ env.SERVICE_NAME }} workflow
-
 # Allow one concurrent deployment
 concurrency:
-  group: ${{ env.SERVICE_NAME }}
+  group: github_worflow
   cancel-in-progress: true
 
 on:
   push:
-    # Only run on main and prod (comment out to run on all branches)
     branches:
       - main
       - prod
