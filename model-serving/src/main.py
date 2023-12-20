@@ -27,7 +27,7 @@ settings = get_settings()
 class MyService(Service):
     # TODO: 2. CHANGE THIS DESCRIPTION
     """
-    Sample service model
+    My service model
     """
 
     # Any additional fields must be excluded for Pydantic to work
@@ -37,8 +37,8 @@ class MyService(Service):
     def __init__(self):
         super().__init__(
             # TODO: 3. CHANGE THE SERVICE NAME AND SLUG
-            name="Sample Service",
-            slug="sample-service",
+            name="My Service",
+            slug="my-service",
             url=settings.service_url,
             summary=api_summary,
             description=api_description,
@@ -80,17 +80,17 @@ class MyService(Service):
 
 
 # TODO: 7. CHANGE THE API DESCRIPTION AND SUMMARY
-api_description = """Sample service
+api_description = """My service
 bla bla bla...
 """
-api_summary = """Sample service
+api_summary = """My service
 bla bla bla...
 """
 
 # Define the FastAPI application with information
 # TODO: 8. CHANGE THE API TITLE, VERSION, CONTACT AND LICENSE
 app = FastAPI(
-    title="Sample Service API.",
+    title="My Service API.",
     description=api_description,
     version="0.0.1",
     contact={

@@ -19,7 +19,7 @@ RUN pip install --requirement requirements.txt --requirement requirements-all.tx
 COPY src src
 
 # Copy model
-# TODO: 1. Change the name of the model file to match the name of your model file
+# TODO: 2. Change the name of the model file to match the name of your model file
 COPY mnist_model.h5 .
 
 # Environment variables
