@@ -10,17 +10,17 @@ env:
   # The organization name is used to build the Docker image name. It can be changed to your liking but usually it is the same as the GitHub organization name or username
   ORGANIZATION_NAME: sample-organization
   # The URLs of the Core Engine to which the service (dev) should connect
-  DEV_CORE_ENGINE_URLS: "'[\"https://core-engine-dev.example.com\"]'"
+  DEV_CORE_ENGINE_URLS: "'[\"https://dev-core-engine.example.com\"]'"
   # The URLs of the Core Engine to which the service (prod) should connect
-  PROD_CORE_ENGINE_URLS: "'[\"https://core-engine-prod.example.com\"]'"
+  PROD_CORE_ENGINE_URLS: "'[\"https://core-engine.example.com\"]'"
   # The URL that the service (dev) should be accessible at
-  DEV_SERVICE_URL: https://${{ env.SERVICE_NAME }}-dev.example.com
+  DEV_SERVICE_URL: https://dev-my-service.example.com
   # The URL that the service (prod) should be accessible at
-  PROD_SERVICE_URL: https://${{ env.SERVICE_NAME }}.example.com
+  PROD_SERVICE_URL: https://my-service.example.com
   # The Kubernetes namespace that the service (dev) should be deployed to
-  DEV_NAMESPACE: namespace-dev
+  DEV_NAMESPACE: dev
   # The Kubernetes namespace that the service (prod) should be deployed to
-  PROD_NAMESPACE: namespace-prod
+  PROD_NAMESPACE: prod
 
 # Allow one concurrent deployment
 concurrency:
@@ -59,7 +59,6 @@ jobs:
         uses: swiss-ai-center/common-code/actions/run-ml-experiment-with-dvc@main
         with:
           ml-experiment-path: ./model-creation
-          # TODO: 2. CHANGE THE ACCESS KEY ID AND SECRET ACCESS KEY
           s3-access-key-id: ${{ secrets.SERVICE_S3_ACCESS_KEY_ID }}
           s3-secret-access-key: ${{ secrets.SERVICE_S3_SECRET_ACCESS_KEY }}
 
@@ -137,29 +136,29 @@ jobs:
           # Set service version
           docker_image_tags=(${{ needs.release.outputs.docker-image-tags }})
           docker_image_sha_tag="${docker_image_tags[1]}"
-          yq ".spec.template.spec.containers[0].image = \"$docker_image_sha_tag\"" ${{ env.SERVICE_NAME }}.stateful.yml > new-${{ env.SERVICE_NAME }}.stateful.yml && mv new-${{ env.SERVICE_NAME }}.stateful.yml ${{ env.SERVICE_NAME }}.stateful.yml
+          yq ".spec.template.spec.containers[0].image = \"$docker_image_sha_tag\"" service.stateful.yml > new-service.stateful.yml && mv new-service.stateful.yml service.stateful.yml
 
           # Set service configuration (ConfigMap)
-          yq '.data = (.data | to_entries | map({"key": .key, "value": "${" + .key + "}"}) | from_entries)' ${{ env.SERVICE_NAME }}.config-map.yml | envsubst > new-${{ env.SERVICE_NAME }}.config-map.yml && mv new-${{ env.SERVICE_NAME }}.config-map.yml ${{ env.SERVICE_NAME }}.config-map.yml
+          yq '.data = (.data | to_entries | map({"key": .key, "value": "${" + .key + "}"}) | from_entries)' service.config-map.yml | envsubst > new-service.config-map.yml && mv new-service.config-map.yml service.config-map.yml
 
           # Set service configuration (Ingress)
-          yq ".metadata.name = \"${{ env.SERVICE_NAME }}\"" ${{ env.SERVICE_NAME }}.ingress.yml > new-${{ env.SERVICE_NAME }}.ingress.yml && mv new-${{ env.SERVICE_NAME }}.ingress.yml ${{ env.SERVICE_NAME }}.ingress.yml
-          yq ".spec.rules[0].host = \"${SERVICE_URL#*://}\"" ${{ env.SERVICE_NAME }}.ingress.yml > new-${{ env.SERVICE_NAME }}.ingress.yml && mv new-${{ env.SERVICE_NAME }}.ingress.yml ${{ env.SERVICE_NAME }}.ingress.yml
-          yq ".spec.tls[0].hosts[0] = \"${SERVICE_URL#*://}\"" ${{ env.SERVICE_NAME }}.ingress.yml > new-${{ env.SERVICE_NAME }}.ingress.yml && mv new-${{ env.SERVICE_NAME }}.ingress.yml ${{ env.SERVICE_NAME }}.ingress.yml
+          yq ".metadata.name = \"${{ env.SERVICE_NAME }}\"" service.ingress.yml > new-service.ingress.yml && mv new-service.ingress.yml service.ingress.yml
+          yq ".spec.rules[0].host = \"${SERVICE_URL#*://}\"" service.ingress.yml > new-service.ingress.yml && mv new-service.ingress.yml service.ingress.yml
+          yq ".spec.tls[0].hosts[0] = \"${SERVICE_URL#*://}\"" service.ingress.yml > new-service.ingress.yml && mv new-service.ingress.yml service.ingress.yml
 
           # Set service configuration (Service)
-          yq ".metadata.name = \"${{ env.SERVICE_NAME }}-service\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
-          yq ".spec.selector.app = \"${{ env.SERVICE_NAME }}\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
+          yq ".metadata.name = \"${{ env.SERVICE_NAME }}-service\"" service.service.yml > new-service.service.yml && mv new-service.service.yml service.service.yml
+          yq ".spec.selector.app = \"${{ env.SERVICE_NAME }}\"" service.service.yml > new-service.service.yml && mv new-service.service.yml service.service.yml
 
           # Set service configuration (StatefulSet)
-          yq ".metadata.name = \"${{ env.SERVICE_NAME }}-stateful\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
-          yq ".metadata.labels.app = \"${{ env.SERVICE_NAME }}\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
-          yq ".spec.serviceName = \"${{ env.SERVICE_NAME }}\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
-          yq ".spec.selector.matchLabels.app = \"${{ env.SERVICE_NAME }}\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
-          yq ".spec.template.metadata.labels.app = \"${{ env.SERVICE_NAME }}\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
-          yq ".spec.template.spec.containers[0].name = \"${{ env.SERVICE_NAME }}\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
-          yq ".spec.template.spec.containers[0].image = \"$docker_image_sha_tag\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
-          yq ".spec.template.spec.containers[0].envFrom[0].configMapRef.name = \"${{ env.SERVICE_NAME }}-config\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
+          yq ".metadata.name = \"${{ env.SERVICE_NAME }}-stateful\"" service.service.yml > new-service.service.yml && mv new-service.service.yml service.service.yml
+          yq ".metadata.labels.app = \"${{ env.SERVICE_NAME }}\"" service.service.yml > new-service.service.yml && mv new-service.service.yml service.service.yml
+          yq ".spec.serviceName = \"${{ env.SERVICE_NAME }}\"" service.service.yml > new-service.service.yml && mv new-service.service.yml service.service.yml
+          yq ".spec.selector.matchLabels.app = \"${{ env.SERVICE_NAME }}\"" service.service.yml > new-service.service.yml && mv new-service.service.yml service.service.yml
+          yq ".spec.template.metadata.labels.app = \"${{ env.SERVICE_NAME }}\"" service.service.yml > new-service.service.yml && mv new-service.service.yml service.service.yml
+          yq ".spec.template.spec.containers[0].name = \"${{ env.SERVICE_NAME }}\"" service.service.yml > new-service.service.yml && mv new-service.service.yml service.service.yml
+          yq ".spec.template.spec.containers[0].image = \"$docker_image_sha_tag\"" service.service.yml > new-service.service.yml && mv new-service.service.yml service.service.yml
+          yq ".spec.template.spec.containers[0].envFrom[0].configMapRef.name = \"${{ env.SERVICE_NAME }}-config\"" service.service.yml > new-service.service.yml && mv new-service.service.yml service.service.yml
 
       - name: Deploy ${{ env.SERVICE_NAME }} on the Kubernetes cluster
         uses: swiss-ai-center/common-code/actions/execute-command-on-kubernetes-cluster@main
@@ -169,10 +168,10 @@ jobs:
           kubectl-context: ./model-serving/kubernetes
           kubectl-args: |
             apply \
-              -f ${{ env.SERVICE_NAME }}.config-map.yml \
-              -f ${{ env.SERVICE_NAME }}.stateful.yml \
-              -f ${{ env.SERVICE_NAME }}.service.yml \
-              -f ${{ env.SERVICE_NAME }}.ingress.yml
+              -f service.config-map.yml \
+              -f service.stateful.yml \
+              -f service.service.yml \
+              -f service.ingress.yml
 
   deploy-prod:
     needs: release
@@ -195,14 +194,14 @@ jobs:
           # Set service version
           docker_image_tags=(${{ needs.release.outputs.docker-image-tags }})
           docker_image_sha_tag="${docker_image_tags[1]}"
-          yq ".spec.template.spec.containers[0].image = \"$docker_image_sha_tag\"" ${{ env.SERVICE_NAME }}.stateful.yml > new-${{ env.SERVICE_NAME }}.stateful.yml && mv new-${{ env.SERVICE_NAME }}.stateful.yml ${{ env.SERVICE_NAME }}.stateful.yml
+          yq ".spec.template.spec.containers[0].image = \"$docker_image_sha_tag\"" service.stateful.yml > new-service.stateful.yml && mv new-service.stateful.yml service.stateful.yml
 
           # Set service configuration (ConfigMap)
-          yq '.data = (.data | to_entries | map({"key": .key, "value": "${" + .key + "}"}) | from_entries)' ${{ env.SERVICE_NAME }}.config-map.yml | envsubst > new-${{ env.SERVICE_NAME }}.config-map.yml && mv new-${{ env.SERVICE_NAME }}.config-map.yml ${{ env.SERVICE_NAME }}.config-map.yml
+          yq '.data = (.data | to_entries | map({"key": .key, "value": "${" + .key + "}"}) | from_entries)' service.config-map.yml | envsubst > new-service.config-map.yml && mv new-service.config-map.yml service.config-map.yml
 
           # Set service configuration (Ingress)
-          yq ".spec.rules[0].host = \"${SERVICE_URL#*://}\"" ${{ env.SERVICE_NAME }}.ingress.yml > new-${{ env.SERVICE_NAME }}.ingress.yml && mv new-${{ env.SERVICE_NAME }}.ingress.yml ${{ env.SERVICE_NAME }}.ingress.yml
-          yq ".spec.tls[0].hosts[0] = \"${SERVICE_URL#*://}\"" ${{ env.SERVICE_NAME }}.ingress.yml > new-${{ env.SERVICE_NAME }}.ingress.yml && mv new-${{ env.SERVICE_NAME }}.ingress.yml ${{ env.SERVICE_NAME }}.ingress.yml
+          yq ".spec.rules[0].host = \"${SERVICE_URL#*://}\"" service.ingress.yml > new-service.ingress.yml && mv new-service.ingress.yml service.ingress.yml
+          yq ".spec.tls[0].hosts[0] = \"${SERVICE_URL#*://}\"" service.ingress.yml > new-service.ingress.yml && mv new-service.ingress.yml service.ingress.yml
 
       - name: Deploy ${{ env.SERVICE_NAME }} on the Kubernetes cluster
         uses: swiss-ai-center/common-code/actions/execute-command-on-kubernetes-cluster@main
@@ -212,7 +211,7 @@ jobs:
           kubectl-context: ./model-serving/kubernetes
           kubectl-args: |
             apply \
-              -f ${{ env.SERVICE_NAME }}.config-map.yml \
-              -f ${{ env.SERVICE_NAME }}.stateful.yml \
-              -f ${{ env.SERVICE_NAME }}.service.yml \
-              -f ${{ env.SERVICE_NAME }}.ingress.yml
+              -f service.config-map.yml \
+              -f service.stateful.yml \
+              -f service.service.yml \
+              -f service.ingress.yml
