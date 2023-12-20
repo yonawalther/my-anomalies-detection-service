@@ -1,16 +1,13 @@
 apiVersion: v1
 kind: Service
 metadata:
-  # TODO: 1. CHANGE THE NAME OF THE SERVICE
-  name: sample-service-service
+  name: service-service
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   ports:
     - name: http
-      # TODO: 2. CHANGE THE PORT (must be the same as in the sample-service.config-map.yml)
       port: 8001
       targetPort: 80
       protocol: TCP
   selector:
-    # TODO: 3. CHANGE THE APP LABEL
-    app: sample-service
+    app: service

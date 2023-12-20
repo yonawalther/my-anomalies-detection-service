@@ -32,6 +32,7 @@ class MyService(Service):
 
     # Any additional fields must be excluded for Pydantic to work
     model: object = Field(exclude=True)
+    logger: object = Field(exclude=True)
 
     def __init__(self):
         super().__init__(
@@ -57,6 +58,7 @@ class MyService(Service):
             ],
             has_ai=True,
         )
+        self.logger = get_logger(settings)
         
         # TODO: 5. INITIALIZE THE MODEL (BY IMPORTING IT FROM A FILE)
         self.model = ...
@@ -94,7 +96,7 @@ app = FastAPI(
     contact={
         "name": "Swiss AI Center",
         "url": "https://swiss-ai-center.ch/",
-        "email": "ia.recherche@hes-so.ch",
+        "email": "info@swiss-ai-center.ch",
     },
     swagger_ui_parameters={
         "tagsSorter": "alpha",

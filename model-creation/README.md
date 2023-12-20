@@ -1,3 +1,3 @@
-# sample-service-with-model
+# model-creation
 
-_Check the [related documentation](https://swiss-ai-center.github.io/core-engine/reference/sample-service-with-model) for more information._
+_Check the [related documentation](https://docs.swiss-ai-center.ch/reference/core-concepts/service/) for more information._

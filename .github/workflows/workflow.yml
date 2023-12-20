@@ -1,99 +1,220 @@
 # Documentation: https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsuses
-name: workflow
-run-name: workflow
+
+env:
+  # Service name (must be lowercase and not contain any spaces)
+  # Note: The files in model-serving/kubernetes/ must be named accordingly
+  SERVICE_NAME: sample-service
+  # Organization name (must be lowercase and not contain any spaces)
+  # The organization name is used to build the Docker image name. It can be changed to your liking but usually it is the same as the GitHub organization name or username
+  ORGANIZATION_NAME: sample-organization
+  # The URLs of the Core Engine to which the service (dev) should connect
+  DEV_CORE_ENGINE_URLS: "'[\"https://core-engine-dev.example.com\"]'"
+  # The URLs of the Core Engine to which the service (prod) should connect
+  PROD_CORE_ENGINE_URLS: "'[\"https://core-engine-prod.example.com\"]'"
+  # The URL that the service (dev) should be accessible at
+  DEV_SERVICE_URL: https://${{ env.SERVICE_NAME }}-dev.example.com
+  # The URL that the service (prod) should be accessible at
+  PROD_SERVICE_URL: https://${{ env.SERVICE_NAME }}.example.com
+  # The Kubernetes namespace that the service (dev) should be deployed to
+  DEV_NAMESPACE: namespace-dev
+  # The Kubernetes namespace that the service (prod) should be deployed to
+  PROD_NAMESPACE: namespace-prod
+
+name: ${{ env.SERVICE_NAME }}_workflow
+run-name: ${{ env.SERVICE_NAME }} workflow
 
 # Allow one concurrent deployment
 concurrency:
-  group: "service"
+  group: ${{ env.SERVICE_NAME }}
   cancel-in-progress: true
 
 on:
   push:
+    # Only run on main and prod (comment out to run on all branches)
+    branches:
+      - main
+      - prod
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
 jobs:
-  run-workflow:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v3
+
+      - name: Lint Python app
+        uses: swiss-ai-center/common-code/actions/lint-python-app@main
+        with:
+          python-app-path: ./model-serving
+
+  train:
+    needs: review
     runs-on: ubuntu-latest
     steps:
       - name: Clone repository
         uses: actions/checkout@v3
 
       - name: Run ML experiment with DVC
-        uses: ./.github/actions/run-ml-experiment-with-dvc
+        uses: swiss-ai-center/common-code/actions/run-ml-experiment-with-dvc@main
         with:
-          ml-experiment-path: ./model_creation
-          # TODO: 6. CHANGE THE KEY TO THE AWS ACCESS KEY ID
-          aws-access-key-id: ${{ secrets.sample-service_AWS_ACCESS_KEY_ID }}
-          # TODO: 7. CHANGE THE KEY TO THE AWS SECRET ACCESS KEY
-          aws-secret-access-key: ${{ secrets.sample-service_AWS_SECRET_ACCESS_KEY }}
+          ml-experiment-path: ./model-creation
+          # TODO: 2. CHANGE THE ACCESS KEY ID AND SECRET ACCESS KEY
+          s3-access-key-id: ${{ secrets.SERVICE_S3_ACCESS_KEY_ID }}
+          s3-secret-access-key: ${{ secrets.SERVICE_S3_SECRET_ACCESS_KEY }}
 
-      - name: Move the model to model_serving directory
-        shell: bash
-        # TODO: 8. CHANGE THE DESTINATION PATH (AND FILENAME IF NEEDED)
-        run: mv ./{model_creation,model_serving}/mnist_model.h5
-
-      - name: Lint Python app
-        uses: ./.github/actions/lint-python-app
+      - name: Upload model
+        uses: actions/upload-artifact@v3
         with:
-          python-app-path: ./model_serving
+          name: model
+          # TODO: 3. CHANGE THE PATH TO THE MODEL
+          path: ./model-creation/path_to_model
+          retention-days: 5
+
+  test:
+    needs: train
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v3
+
+      - name: Download model
+        uses: actions/download-artifact@v3
+        with:
+          name: model
+          path: ./model-serving
 
       - name: Test Python app
-        uses: ./.github/actions/test-python-app
+        uses: swiss-ai-center/common-code/actions/test-python-app@main
         with:
-          python-app-path: ./model_serving
+          python-app-path: ./model-serving
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    # Only run on main
+    if: success() && github.ref == 'refs/heads/main'
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v3
+
+      - name: Download model
+        uses: actions/download-artifact@v3
+        with:
+          name: model
+          path: ./model-serving
 
       - name: Build and push Docker image to GitHub
         id: build-and-push-docker-image-to-github
-        # Only run on main
-        if: github.ref == 'refs/heads/main'
-        uses: ./.github/actions/build-and-push-docker-image-to-github
+        uses: swiss-ai-center/common-code/actions/build-and-push-docker-image-to-github@main
         with:
           docker-registry-username: ${{ github.actor }}
           docker-registry-password: ${{ secrets.GITHUB_TOKEN }}
-          # TODO: 11. CHANGE THE DOCKER IMAGE NAME
-          docker-image-name: swiss-ai-center/sample-service
-          # TODO: 12. CHANGE THE PATH TO THE DOCKER IMAGE CONTEXT
-          docker-image-context: ./services/sample-service/model_serving
+          docker-image-name: ${{ env.ORGANIZATION_NAME }}/${{ env.SERVICE_NAME }}
+          docker-image-context: ./model-serving
+    outputs:
+      docker-image-tags: ${{ steps.build-and-push-docker-image-to-github.outputs.docker-image-tags }}
+
+  deploy-dev:
+    needs: release
+    runs-on: ubuntu-latest
+    # Only run on main and if secret DEPLOY_DEV is set to true
+    if: success() && github.ref == 'refs/heads/main' && secrets.DEPLOY_DEV == 'true'
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v3
 
       - name: Prepare configuration files
-        # Only run on main
-        if: github.ref == 'refs/heads/main'
         shell: bash
-        # TODO: 13. CHANGE THE PATH TO THE KUBERNETES CONFIGURATION FILES
-        working-directory: services/sample-service/model_serving/kubernetes
+        working-directory: ./model-serving/kubernetes
+        env:
+          ENVIRONMENT: development
+          LOG_LEVEL: info
+          ENGINE_URLS: ${{ env.DEV_CORE_ENGINE_URLS }}
+          SERVICE_URL: ${{ env.DEV_SERVICE_URL }}
+        run: |
+          # Set service version
+          docker_image_tags=(${{ needs.release.outputs.docker-image-tags }})
+          docker_image_sha_tag="${docker_image_tags[1]}"
+          yq ".spec.template.spec.containers[0].image = \"$docker_image_sha_tag\"" ${{ env.SERVICE_NAME }}.stateful.yml > new-${{ env.SERVICE_NAME }}.stateful.yml && mv new-${{ env.SERVICE_NAME }}.stateful.yml ${{ env.SERVICE_NAME }}.stateful.yml
+
+          # Set service configuration (ConfigMap)
+          yq '.data = (.data | to_entries | map({"key": .key, "value": "${" + .key + "}"}) | from_entries)' ${{ env.SERVICE_NAME }}.config-map.yml | envsubst > new-${{ env.SERVICE_NAME }}.config-map.yml && mv new-${{ env.SERVICE_NAME }}.config-map.yml ${{ env.SERVICE_NAME }}.config-map.yml
+
+          # Set service configuration (Ingress)
+          yq ".metadata.name = \"${{ env.SERVICE_NAME }}\"" ${{ env.SERVICE_NAME }}.ingress.yml > new-${{ env.SERVICE_NAME }}.ingress.yml && mv new-${{ env.SERVICE_NAME }}.ingress.yml ${{ env.SERVICE_NAME }}.ingress.yml
+          yq ".spec.rules[0].host = \"${SERVICE_URL#*://}\"" ${{ env.SERVICE_NAME }}.ingress.yml > new-${{ env.SERVICE_NAME }}.ingress.yml && mv new-${{ env.SERVICE_NAME }}.ingress.yml ${{ env.SERVICE_NAME }}.ingress.yml
+          yq ".spec.tls[0].hosts[0] = \"${SERVICE_URL#*://}\"" ${{ env.SERVICE_NAME }}.ingress.yml > new-${{ env.SERVICE_NAME }}.ingress.yml && mv new-${{ env.SERVICE_NAME }}.ingress.yml ${{ env.SERVICE_NAME }}.ingress.yml
+
+          # Set service configuration (Service)
+          yq ".metadata.name = \"${{ env.SERVICE_NAME }}-service\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
+          yq ".spec.selector.app = \"${{ env.SERVICE_NAME }}\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
+
+          # Set service configuration (StatefulSet)
+          yq ".metadata.name = \"${{ env.SERVICE_NAME }}-stateful\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
+          yq ".metadata.labels.app = \"${{ env.SERVICE_NAME }}\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
+          yq ".spec.serviceName = \"${{ env.SERVICE_NAME }}\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
+          yq ".spec.selector.matchLabels.app = \"${{ env.SERVICE_NAME }}\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
+          yq ".spec.template.metadata.labels.app = \"${{ env.SERVICE_NAME }}\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
+          yq ".spec.template.spec.containers[0].name = \"${{ env.SERVICE_NAME }}\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
+          yq ".spec.template.spec.containers[0].image = \"$docker_image_sha_tag\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
+          yq ".spec.template.spec.containers[0].envFrom[0].configMapRef.name = \"${{ env.SERVICE_NAME }}-config\"" ${{ env.SERVICE_NAME }}.service.yml > new-${{ env.SERVICE_NAME }}.service.yml && mv new-${{ env.SERVICE_NAME }}.service.yml ${{ env.SERVICE_NAME }}.service.yml
+
+      - name: Deploy ${{ env.SERVICE_NAME }} on the Kubernetes cluster
+        uses: swiss-ai-center/common-code/actions/execute-command-on-kubernetes-cluster@main
+        with:
+          kube-config: ${{ secrets.KUBE_CONFIG_DEV }}
+          kube-namespace: ${{ env.DEV_NAMESPACE }}
+          kubectl-context: ./model-serving/kubernetes
+          kubectl-args: |
+            apply \
+              -f ${{ env.SERVICE_NAME }}.config-map.yml \
+              -f ${{ env.SERVICE_NAME }}.stateful.yml \
+              -f ${{ env.SERVICE_NAME }}.service.yml \
+              -f ${{ env.SERVICE_NAME }}.ingress.yml
+
+  deploy-prod:
+    needs: release
+    runs-on: ubuntu-latest
+    # Only run on prod and if secret DEPLOY_PROD is set to true
+    if: success() && github.ref == 'refs/heads/prod' && secrets.DEPLOY_PROD == 'true'
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v3
+
+      - name: Prepare configuration files
+        shell: bash
+        working-directory: ./model-serving/kubernetes
         env:
           ENVIRONMENT: production
           LOG_LEVEL: info
-          # Core Engine URLs can be added as a list separated by a comma with escaped double quotes
-          ENGINE_URLS: "'[\"https://core-engine-swiss-ai-center.kube.isc.heia-fr.ch\"]'"
-          # TODO: 14. CHANGE THE SERVICE URL
-          SERVICE_URL: https://sample-service-swiss-ai-center.kube.isc.heia-fr.ch
-        # TODO: 15. CHANGE THE NAME OF THE CONFIGURATION FILES
+          ENGINE_URLS: ${{ env.PROD_CORE_ENGINE_URLS }}
+          SERVICE_URL: ${{ env.PROD_SERVICE_URL }}
         run: |
-          # Set sample-service version
-          docker_image_tags=(${{ steps.build-and-push-docker-image-to-github.outputs.docker-image-tags }})
+          # Set service version
+          docker_image_tags=(${{ needs.release.outputs.docker-image-tags }})
           docker_image_sha_tag="${docker_image_tags[1]}"
-          yq ".spec.template.spec.containers[0].image = \"$docker_image_sha_tag\"" sample-service.stateful.yml > new-sample-service.stateful.yml && mv new-sample-service.stateful.yml sample-service.stateful.yml
+          yq ".spec.template.spec.containers[0].image = \"$docker_image_sha_tag\"" ${{ env.SERVICE_NAME }}.stateful.yml > new-${{ env.SERVICE_NAME }}.stateful.yml && mv new-${{ env.SERVICE_NAME }}.stateful.yml ${{ env.SERVICE_NAME }}.stateful.yml
 
-          # Set sample-service configuration
-          yq '.data = (.data | to_entries | map({"key": .key, "value": "${" + .key + "}"}) | from_entries)' sample-service.config-map.yml | envsubst > new-sample-service.config-map.yml && mv new-sample-service.config-map.yml sample-service.config-map.yml
+          # Set service configuration (ConfigMap)
+          yq '.data = (.data | to_entries | map({"key": .key, "value": "${" + .key + "}"}) | from_entries)' ${{ env.SERVICE_NAME }}.config-map.yml | envsubst > new-${{ env.SERVICE_NAME }}.config-map.yml && mv new-${{ env.SERVICE_NAME }}.config-map.yml ${{ env.SERVICE_NAME }}.config-map.yml
 
-      # TODO: 16. CHANGE THE NAME OF THE ACTION
-      - name: Deploy sample-service on the Kubernetes cluster
-        # Only run on main
-        if: github.ref == 'refs/heads/main'
-        uses: ./.github/actions/execute-command-on-kubernetes-cluster
+          # Set service configuration (Ingress)
+          yq ".spec.rules[0].host = \"${SERVICE_URL#*://}\"" ${{ env.SERVICE_NAME }}.ingress.yml > new-${{ env.SERVICE_NAME }}.ingress.yml && mv new-${{ env.SERVICE_NAME }}.ingress.yml ${{ env.SERVICE_NAME }}.ingress.yml
+          yq ".spec.tls[0].hosts[0] = \"${SERVICE_URL#*://}\"" ${{ env.SERVICE_NAME }}.ingress.yml > new-${{ env.SERVICE_NAME }}.ingress.yml && mv new-${{ env.SERVICE_NAME }}.ingress.yml ${{ env.SERVICE_NAME }}.ingress.yml
+
+      - name: Deploy ${{ env.SERVICE_NAME }} on the Kubernetes cluster
+        uses: swiss-ai-center/common-code/actions/execute-command-on-kubernetes-cluster@main
         with:
-          kube-config: ${{ secrets.KUBE_CONFIG }}
-          kube-namespace: swiss-ai-center-prod
-          # TODO: 17. CHANGE THE KUBERNETES CONTEXT
-          kubectl-context: ./services/sample-service/model_serving/
-          # TODO: 18. CHANGE THE NAME OF THE KUBERNETES CONFIGURATION FILES
+          kube-config: ${{ secrets.KUBE_CONFIG_PROD }}
+          kube-namespace: ${{ env.PROD_NAMESPACE }}
+          kubectl-context: ./model-serving/kubernetes
           kubectl-args: |
             apply \
-              -f sample-service.config-map.yml \
-              -f sample-service.stateful.yml \
-              -f sample-service.service.yml \
-              -f sample-service.ingress.yml
+              -f ${{ env.SERVICE_NAME }}.config-map.yml \
+              -f ${{ env.SERVICE_NAME }}.stateful.yml \
+              -f ${{ env.SERVICE_NAME }}.service.yml \
+              -f ${{ env.SERVICE_NAME }}.ingress.yml
